@@ -287,7 +287,6 @@ def visitorhostel(request):
 # Get methods for bookings
 
 
-
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 @authentication_classes([TokenAuthentication])
@@ -330,16 +329,42 @@ def get_booking_requests(request):
 
 # getting active bookings
 
-
-@login_required(login_url='/accounts/login/')
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
 def get_active_bookings(request):
-    if request.method == 'POST':
+    if request.method == 'GET':
         active_bookings = BookingDetail.objects.select_related(
             'intender', 'caretaker').filter(status="Confirmed")
 
-        return render(request, "vhModule/visitorhostel.html", {'active_bookings': active_bookings})
+        # Serialize the queryset to a list of dictionaries
+        bookings_list = [
+            {
+                'id': booking.id,
+                'intender': booking.intender.first_name,
+                'email': booking.intender.email,
+                'bookingFrom': booking.booking_from.isoformat() if booking.booking_from else None,
+                'bookingTo': booking.booking_to.isoformat() if booking.booking_to else None,
+                'category': booking.visitor_category,
+                # 'status': booking.status,
+            }
+            for booking in active_bookings
+        ]
+
+        return JsonResponse({'active_bookings': bookings_list})
     else:
-        return HttpResponseRedirect('/visitorhostel/')
+        return JsonResponse({'error': 'Invalid request method'}, status=400)
+
+
+# @login_required(login_url='/accounts/login/')
+# def get_active_bookings(request):
+#     if request.method == 'POST':
+#         active_bookings = BookingDetail.objects.select_related(
+#             'intender', 'caretaker').filter(status="Confirmed")
+
+#         return render(request, "vhModule/visitorhostel.html", {'active_bookings': active_bookings})
+#     else:
+#         return HttpResponseRedirect('/visitorhostel/')
 
 
 @login_required(login_url='/accounts/login/')
