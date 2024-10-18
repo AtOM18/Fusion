@@ -30,6 +30,12 @@ from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.decorators import api_view, permission_classes,authentication_classes
+from django.http import JsonResponse
+from .models import BookingDetail  # Make sure to import your BookingDetail model
+from django.utils import timezone
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.decorators import api_view, permission_classes,authentication_classes
 
 # from .forms import InventoryForm
 
@@ -287,14 +293,36 @@ def visitorhostel(request):
 # Get methods for bookings
 
 
+
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 @authentication_classes([TokenAuthentication])
 def get_booking_requests(request):
     print("works? in the original request")
-    
+
+    # intenders
+    intenders = User.objects.all()
+    user = request.user
+    vhcaretaker = request.user.holds_designations.filter(
+        designation__name='VhCaretaker').exists()
+    vhincharge = request.user.holds_designations.filter(
+        designation__name='VhIncharge').exists()
+
+    # finding designation of user
+    user_designation = "Intender"
+    if vhincharge:
+        user_designation = "VhIncharge"
+    elif vhcaretaker:
+        user_designation = "VhCaretaker"
+
     if request.method == 'GET':
-        pending_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter(status="Pending")
+        print("User Designation: ", user_designation)
+        if user_designation in ["VhIncharge", "VhCaretaker"]:
+            # Fetch all pending bookings
+            pending_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter(status="Pending")
+        else:
+            # Filter bookings by the authenticated user
+            pending_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter(status="Pending", intender=request.user)
 
         # Serialize the queryset to a list of dictionaries
         bookings_list = [
