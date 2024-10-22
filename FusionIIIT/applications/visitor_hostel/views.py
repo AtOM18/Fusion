@@ -320,11 +320,11 @@ def get_booking_requests(request):
         if user_designation in ["VhIncharge", "VhCaretaker"]:
             # Fetch all pending bookings
             pending_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter(Q(status="Pending") | Q(status="Forward") | Q(
-            status="Confirmed") | Q(status='Rejected'), booking_to__gte=datetime.datetime.today())
+            status="Confirmed"), booking_to__gte=datetime.datetime.today())
         else:
             # Filter bookings by the authenticated user
             pending_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter(Q(status="Pending") | Q(status="Forward") | Q(
-            status="Confirmed") | Q(status='Rejected'), booking_to__gte=datetime.datetime.today(), intender=request.user)
+            status="Confirmed"), booking_to__gte=datetime.datetime.today(), intender=request.user)
 
         # Serialize the queryset to a list of dictionaries
         bookings_list = [
@@ -383,10 +383,10 @@ def get_active_bookings(request):
 
         if user_designation in ["VhIncharge", "VhCaretaker"]:
             # Fetch all confirmed bookings for VhCaretaker or VhIncharge
-            active_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter( Q(status="Forward") | Q(status="CheckedIn"), booking_to__gte=datetime.datetime.today())
+            active_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter( Q(status="Forward") | Q(status="CheckedIn") | Q(status="Pending"), booking_to__gte=datetime.datetime.today())
         else:
             # Filter active bookings for the logged-in user (intender)
-            active_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter( Q(status="Forward") | Q(status="CheckedIn"), booking_to__gte=datetime.datetime.today())
+            active_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter( Q(status="Forward") | Q(status="CheckedIn") | Q(status="Pending"), booking_to__gte=datetime.datetime.today())
 
         # Serialize the queryset to a list of dictionaries
         bookings_list = [
@@ -443,7 +443,7 @@ def get_inactive_bookings(request):
 
         if user_designation in ["VhIncharge", "VhCaretaker"]:
             # Fetch all cancelled bookings for VhCaretaker or VhIncharge
-            cancelled_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter(status="Canceled") | Q(status="Rejected")
+            cancelled_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter(Q(status="Canceled") | Q(status="Rejected"))
         else:
             # Filter cancelled bookings for the logged-in user (intender)
             cancelled_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter(Q(status="Canceled") | Q(status="Rejected"), intender=request.user)
@@ -759,7 +759,9 @@ def confirm_booking(request):
         return HttpResponseRedirect('/visitorhostel/')
 
 
-@login_required(login_url='/accounts/login/')
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
 def cancel_booking(request):
     if request.method == 'POST':
         user = request.user
