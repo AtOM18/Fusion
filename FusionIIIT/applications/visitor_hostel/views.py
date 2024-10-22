@@ -999,8 +999,10 @@ def cancel_booking_request(request):
 
 
 # rehject a booking request
-
-@login_required(login_url='/accounts/login/')
+@csrf_exempt
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
 def reject_booking(request):
     if request.method == 'POST':
         booking_id = request.POST.get('booking-id')
