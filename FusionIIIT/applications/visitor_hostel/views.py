@@ -4,6 +4,7 @@ import xlrd
 import os
 import sys
 
+
 from django.core.files.storage import FileSystemStorage
 from django.views.decorators.csrf import csrf_exempt
 
@@ -39,6 +40,24 @@ from rest_framework.authentication import TokenAuthentication
 from rest_framework.decorators import api_view, permission_classes,authentication_classes
 
 from django.views.decorators.http import require_GET
+
+
+#----
+#account staments 
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
+from rest_framework.response import Response
+from .models import Inventory, InventoryBill
+from .serializers import InventorySerializer, InventoryBillSerializer
+
+#income
+from rest_framework import generics
+from .models import BookingDetail
+from .serializers import BookingDetailSerializer
+#--
+
+
 
 # from .forms import InventoryForm
 
@@ -405,12 +424,18 @@ def get_active_bookings(request):
         print("User Designation: ", user_designation)
 
         if user_designation in ["VhIncharge", "VhCaretaker"]:
-            # Fetch all confirmed bookings for VhCaretaker or VhIncharge
-            active_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter( Q(status="Forward") | Q(status="CheckedIn") | Q(status="Pending"), booking_to__gte=datetime.datetime.today())
+            # Fetch all relevant bookings for VhCaretaker or VhIncharge
+            active_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter(
+                Q(status="Forward") | Q(status="CheckedIn") | Q(status="Pending"),
+                booking_to__gte=date.today()
+            )
         else:
-            # Filter active bookings for the logged-in user (intender)
-            active_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter( Q(status="Forward") | Q(status="CheckedIn") | Q(status="Pending"), booking_to__gte=datetime.datetime.today())
-
+            # Fetch only the logged-in user's bookings
+            active_bookings = BookingDetail.objects.select_related('intender', 'caretaker').filter(
+                Q(status="Forward") | Q(status="CheckedIn") | Q(status="Pending"),
+                booking_to__gte=date.today(),
+                intender=user
+            )
         # Serialize the queryset to a list of dictionaries
         bookings_list = [
             {
@@ -1185,6 +1210,29 @@ def bill_generation(request):
 
         else:
             return HttpResponseRedirect('/visitorhostel/')
+        
+# get available rooms list between date range
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def room_availabity_new(request):
+    if request.method == 'POST':
+        date_1 = request.data.get('start_date')
+        date_2 = request.data.get('end_date')
+        available_rooms_list = []
+
+        available_rooms_bw_dates = booking_details(date_1, date_2)
+
+        for room in available_rooms_bw_dates:
+            available_rooms_list.append(room.room_number)
+
+        available_rooms_array = np.asarray(available_rooms_list)
+        
+        # Return available rooms in a JSON response
+        return JsonResponse({'available_rooms': available_rooms_array.tolist()})
+    else:
+        return JsonResponse({'error': 'Invalid request method'}, status=400)
 
 # get available rooms list between date range
 
@@ -1205,6 +1253,79 @@ def room_availabity(request):
         return render(request, "vhModule/room-availability.html", {'available_rooms': available_rooms_array})
     else:
         return HttpResponseRedirect('/visitorhostel/')
+
+
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def check_partial_booking(request):
+    """
+    API to check room availability with partial booking support.
+    """
+    if request.method == 'POST':
+        date_1 = request.data.get('start_date')
+        date_2 = request.data.get('end_date')
+        room_id = request.data.get('room_id')
+        
+        if not (date_1 and date_2 and room_id):
+            return JsonResponse({'error': 'Start date, end date, and room ID are required.'}, status=400)
+        
+        # Convert input dates to datetime objects
+        start_date = datetime.datetime.strptime(date_1, "%Y-%m-%d").date()
+        end_date = datetime.datetime.strptime(date_2, "%Y-%m-%d").date()
+
+        # Fetch room details
+        try:
+            room = RoomDetail.objects.get(id=room_id)
+        except RoomDetail.DoesNotExist:
+            return JsonResponse({'error': 'Room not found'}, status=404)
+
+        room_type = room.room_type
+
+        # Check for existing bookings for the given room
+        overlapping_bookings = BookingDetail.objects.filter(
+            rooms__id=room_id,
+            booking_from__lt=end_date,
+            booking_to__gt=start_date,
+            status="Confirmed"
+        )
+
+        # Initialize response data
+        partial_available = False
+        available_from = start_date
+        available_to = end_date
+
+        # If there are overlapping bookings, find the partial availability
+        if overlapping_bookings.exists():
+            partial_available = True
+            for booking in overlapping_bookings:
+                # Check if the requested range can be partially accommodated
+                if booking.booking_from > start_date:
+                    available_to = min(available_to, booking.booking_from)
+                if booking.booking_to < end_date:
+                    available_from = max(available_from, booking.booking_to)
+
+            # Ensure the available dates are within the original range
+            available_from = max(start_date, available_from)
+            available_to = min(end_date, available_to)
+
+        # Response preparation
+        response_data = {
+            'room_id': room_id,
+            'room_type': room_type, 
+            'requested_from': date_1,
+            'requested_to': date_2,
+            'is_fully_available': not overlapping_bookings.exists(),
+            'is_partial_available': partial_available,
+            'partial_available_from': available_from if partial_available else None,
+            'partial_available_to': available_to if partial_available else None,
+        }
+        return JsonResponse(response_data)
+    
+    else:
+        return JsonResponse({'error': 'Invalid request method'}, status=400)
 
 
 @login_required(login_url='/accounts/login/')
@@ -1444,3 +1565,117 @@ def forward_booking_new(request):
         return JsonResponse({'error': 'One or more rooms not found'}, status=404)
     except Exception as e:
         return JsonResponse({'error': str(e)}, status=400)
+
+
+#account statements
+
+# Fetch all inventory items
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def get_inventory_items(request):
+    inventories = Inventory.objects.all()
+    serializer = InventorySerializer(inventories, many=True)
+    return Response(serializer.data)
+
+# Fetch a specific inventory item by ID
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def get_inventory_item(request, pk):
+    try:
+        inventory = Inventory.objects.get(id=pk)
+        serializer = InventorySerializer(inventory)
+        return Response(serializer.data)
+    except Inventory.DoesNotExist:
+        return Response({"error": "Inventory item not found"}, status=404)
+
+# Fetch all bills
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def get_inventory_bills(request):
+    bills = InventoryBill.objects.all()
+    serializer = InventoryBillSerializer(bills, many=True)
+    return Response(serializer.data)
+
+# Fetch a specific bill by ID
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def get_inventory_bill(request, pk):
+    try:
+        bill = InventoryBill.objects.get(id=pk)
+        serializer = InventoryBillSerializer(bill)
+        return Response(serializer.data)
+    except InventoryBill.DoesNotExist:
+        return Response({"error": "Bill not found"}, status=404)
+
+
+#income
+# account statements
+
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.authentication import TokenAuthentication
+from .models import BookingDetail
+from .serializers import BookingDetailSerializer
+
+# Fetch all booking details
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def get_all_bills(request):
+    bookings = BookingDetail.objects.all()
+    response_data = []
+
+    for booking in bookings:
+        # Check if the related bill exists
+        if hasattr(booking, 'bill'):
+            total_bill = booking.bill.meal_bill + booking.bill.room_bill
+            bill_id = booking.bill.id
+            bill_date = booking.bill.bill_date
+        else:
+            total_bill = 0
+            bill_id = None
+            bill_date = None
+            
+        response_data.append({
+            'intender_name': booking.intender.username,  # Assuming `username` for the user's name
+            'booking_from': booking.booking_from,
+            'booking_to': booking.booking_to,
+            'total_bill': total_bill,
+            'bill_id': bill_id,
+            'bill_date': bill_date,
+        })
+
+    return Response(response_data)
+
+# Fetch a specific booking detail by ID
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+@authentication_classes([TokenAuthentication])
+def get_bills_id(request, pk):
+    try:
+        booking = BookingDetail.objects.get(id=pk)
+        if hasattr(booking, 'bill'):
+            total_bill = booking.bill.meal_bill + booking.bill.room_bill
+            bill_id = booking.bill.id
+            bill_date = booking.bill.bill_date
+        else:
+            total_bill = 0
+            bill_id = None
+            bill_date = None
+
+        response_data = {
+            'intender_name': booking.intender.username,  # Assuming `username` for the user's name
+            'booking_from': booking.booking_from,
+            'booking_to': booking.booking_to,
+            'total_bill': total_bill,
+            'bill_id': bill_id,
+            'bill_date': bill_date,
+        }
+        return Response(response_data)
+    except BookingDetail.DoesNotExist:
+        return Response({"error": "Booking detail not found"}, status=404)
